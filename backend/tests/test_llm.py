@@ -1,6 +1,6 @@
 import pytest
 from app.llm.factory import get_llm_provider
-from app.llm.ollama import OllamaProvider
+from app.llm.ollama import OllamaProvider, classify_ollama_error
 from app.llm.cloud import AnthropicProvider, OpenAIProvider
 
 
@@ -14,6 +14,12 @@ def test_factory_returns_cloud_provider():
     provider = get_llm_provider(provider_override="anthropic")
     assert isinstance(provider, AnthropicProvider)
     assert provider.provider_name == "anthropic"
+
+
+def test_ollama_error_classification_distinguishes_runtime_failures():
+    assert classify_ollama_error(404, '{"error":"model not found"}') == "model_missing"
+    assert classify_ollama_error(500, "model requires more system memory") == "memory_failure"
+    assert classify_ollama_error(503, "service unavailable") == "unavailable"
 
 
 @pytest.mark.asyncio

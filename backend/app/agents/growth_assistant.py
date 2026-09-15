@@ -1,5 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional
+from app.config import settings
 from app.llm.base import LLMProvider, LLMMessage
 from app.retrieval.retriever import get_retriever, RetrievedChunk
 
@@ -16,7 +17,7 @@ CORE OPERATING DIRECTIVES:
 
 2. **Handling Insufficient Evidence**:
    - If the retrieved transcript excerpts do NOT contain enough information to answer the question accurately, you MUST explicitly state:
-     "Based on the available Lenny's Podcast transcript material, there is insufficient evidence to provide a fully grounded answer to this specific question."
+     "Based on the available Lenny's Podcast transcript material, there is insufficient evidence to provide a grounded answer to this specific question."
    - Do not attempt to guess or disguise a lack of evidence.
 
 3. **Tone & Style**:
@@ -32,6 +33,8 @@ CORE OPERATING DIRECTIVES:
 class GrowthAssistantAgent:
     """
     Main conversational agent for grounded product management & growth advising.
+    Includes a hard programmatic guard that short-circuits with an honest refusal
+    BEFORE calling the LLM if retrieval yields zero or below-threshold chunks.
     """
 
     def __init__(self, llm_provider: LLMProvider):
@@ -42,16 +45,39 @@ class GrowthAssistantAgent:
         self,
         question: str,
         conversation_history: Optional[List[LLMMessage]] = None,
-        top_k: int = 5
+        top_k: int = 5,
+        threshold: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Executes query retrieval, grounding assembly, and conversational generation.
+        Executes query retrieval, hard grounding guard, and conversational generation.
         """
         # 1. Retrieve relevant transcript chunks
         retrieved_chunks = await self.retriever.retrieve(query=question, top_k=top_k)
 
-        # 2. Check evidence confidence
-        has_sufficient_evidence = len(retrieved_chunks) > 0 and retrieved_chunks[0].score >= 0.22
+        # 2. Hard programmatic guard BEFORE LLM invocation
+        min_threshold = threshold if threshold is not None else settings.RAG_CONFIDENCE_THRESHOLD
+        has_sufficient_evidence = len(retrieved_chunks) > 0 and retrieved_chunks[0].score >= min_threshold
+
+        if not has_sufficient_evidence:
+            logger.info(
+                "Deterministic refusal triggered: query='%s', chunks=%d, top_score=%.3f, threshold=%.3f. Bypassing LLM.",
+                question[:50],
+                len(retrieved_chunks),
+                retrieved_chunks[0].score if retrieved_chunks else 0.0,
+                min_threshold
+            )
+            return {
+                "answer": (
+                    "Based on the available Lenny's Podcast transcript material, there is insufficient evidence "
+                    "to provide a grounded answer to this question. The knowledge base does not contain transcript "
+                    "excerpts supporting this topic."
+                ),
+                "sources": [],
+                "retrieved_chunks_count": len(retrieved_chunks),
+                "evidence_sufficient": False,
+                "provider": self.llm.provider_name,
+                "model": self.llm.model_name
+            }
 
         # 3. Assemble transcript context
         context_parts = []
@@ -63,17 +89,15 @@ class GrowthAssistantAgent:
                 f"Link: {c.youtube_timed_url or c.youtube_url or 'N/A'}\n"
                 f"Content: {c.text}\n"
             )
-        grounded_context = "\n---\n".join(context_parts) if context_parts else "NO MATCHING TRANSCRIPT EVIDENCE FOUND."
+        grounded_context = "\n---\n".join(context_parts)
 
         # 4. Assemble messages payload with conversation history
         messages_payload: List[LLMMessage] = []
 
-        # Include prior session turns if available (up to last 6 messages)
         if conversation_history:
             for h in conversation_history[-6:]:
                 messages_payload.append(h)
 
-        # Current question with grounded context injected
         user_prompt = f"""QUESTION: {question}
 
 RETRIEVED TRANSCRIPT EVIDENCE:
@@ -83,16 +107,16 @@ RETRIEVED TRANSCRIPT EVIDENCE:
 
 INSTRUCTIONS:
 Provide a comprehensive, actionable answer strictly grounded in the transcript excerpts above.
-Cite the guest and episode context. If the evidence is insufficient, say so honestly.
+Cite the guest and episode context.
 """
         messages_payload.append(LLMMessage(role="user", content=user_prompt))
 
         # 5. Generate response
         logger.info(
-            "GrowthAssistant invoking LLM '%s' with %d chunks (top_score=%.3f)",
+            "GrowthAssistant invoking LLM '%s' with %d verified chunks (top_score=%.3f)",
             self.llm.provider_name,
             len(retrieved_chunks),
-            retrieved_chunks[0].score if retrieved_chunks else 0.0
+            retrieved_chunks[0].score
         )
 
         response = await self.llm.generate(
@@ -102,7 +126,6 @@ Cite the guest and episode context. If the evidence is insufficient, say so hone
             max_tokens=2048
         )
 
-        # Format source citations for response and UI cards
         sources_meta = [
             {
                 "chunk_id": c.chunk_id,
@@ -121,7 +144,7 @@ Cite the guest and episode context. If the evidence is insufficient, say so hone
             "answer": response.content,
             "sources": sources_meta,
             "retrieved_chunks_count": len(retrieved_chunks),
-            "evidence_sufficient": has_sufficient_evidence,
+            "evidence_sufficient": True,
             "provider": self.llm.provider_name,
             "model": self.llm.model_name
         }

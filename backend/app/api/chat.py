@@ -8,16 +8,10 @@ from app.db.database import get_db
 from app.db.repositories import SessionRepository, MessageRepository, ArtifactRepository
 from app.llm.base import LLMMessage
 from app.llm.factory import get_llm_provider
-from app.agents.router import IntentRouter, AgentIntent
-from app.agents.growth_assistant import GrowthAssistantAgent
-from app.agents.skills.ship30 import Ship30Skill
-from app.agents.skills.artifact_gen import ArtifactSkill
-from app.retrieval.retriever import get_retriever
+from app.agents.core import LennyAgentEngine
 
 logger = logging.getLogger("lenny.api.chat")
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
-
-intent_router = IntentRouter()
 
 
 class ChatRequest(BaseModel):
@@ -46,6 +40,8 @@ class ChatResponse(BaseModel):
     artifact: Optional[ArtifactPayload] = None
     provider: str
     model: str
+    tool_calls: List[str] = []
+    evidence_sufficient: bool = True
 
 
 @router.post("", response_model=ChatResponse)
@@ -57,15 +53,14 @@ async def chat_endpoint(
     msg_repo = MessageRepository(db)
     art_repo = ArtifactRepository(db)
 
-    # 1. Verify session exists
+    # 1. Verify session exists or auto-create
     session = await session_repo.get_session(payload.session_id)
     if not session:
-        # Auto-create if not present
         session = await session_repo.create_session(
             title=payload.message[:45] + ("..." if len(payload.message) > 45 else "")
         )
 
-    # 2. Save user message
+    # 2. Save incoming user message
     await msg_repo.add_message(
         session_id=session.id,
         role="user",
@@ -79,11 +74,11 @@ async def chat_endpoint(
             new_title += "..."
         await session_repo.update_session_title(session.id, new_title)
 
-    # 3. Retrieve session conversation history (for follow-up context)
+    # 3. Retrieve conversation history for context
     past_messages = await msg_repo.get_session_messages(session.id, limit=10)
     history_messages = [
         LLMMessage(role=m.role, content=m.content)
-        for m in past_messages[:-1]  # Exclude current message
+        for m in past_messages[:-1]
     ]
 
     # 4. Resolve LLM provider
@@ -92,104 +87,58 @@ async def chat_endpoint(
         model_override=payload.model
     )
 
-    # 5. Route intent
-    detected_intent = intent_router.route(payload.message)
-
-    assistant_content = ""
-    sources_meta = []
-    artifact_payload = None
+    # 5. Execute unified Agent Engine (Anthropic Claude Agent SDK in Cloud / Tool dispatch in Local)
+    agent_engine = LennyAgentEngine(llm_provider)
 
     try:
-        retriever = get_retriever()
-
-        if detected_intent == AgentIntent.SHIP30_ESSAY:
-            # Route to Ship 30 for 30 Skill
-            chunks = await retriever.retrieve(query=payload.message, top_k=5)
-            ship30 = Ship30Skill(llm_provider)
-            result = await ship30.generate_essay(
-                topic_or_query=payload.message,
-                retrieved_chunks=chunks,
-                conversation_history=history_messages
-            )
-            assistant_content = result["content"]
-            sources_meta = result["sources"]
-
-        elif detected_intent == AgentIntent.ARTIFACT_GEN:
-            # Route to Artifact Generation Skill
-            chunks = await retriever.retrieve(query=payload.message, top_k=4)
-            artifact_skill = ArtifactSkill(llm_provider)
-            art_result = await artifact_skill.generate_artifact(
-                prompt=payload.message,
-                retrieved_chunks=chunks
-            )
-            
-            # Save artifact to database
-            created_artifact = await art_repo.create_artifact(
-                session_id=session.id,
-                type=art_result["type"],
-                title=art_result["title"],
-                content=art_result["raw_content"],
-                sanitized_content=art_result["sanitized_content"]
-            )
-            
-            artifact_payload = ArtifactPayload(
-                id=created_artifact.id,
-                session_id=created_artifact.session_id,
-                title=created_artifact.title,
-                type=created_artifact.type,
-                content=created_artifact.content,
-                sanitized_content=created_artifact.sanitized_content
-            )
-
-            assistant_content = (
-                f"I have generated the requested **{created_artifact.title}** ({created_artifact.type.upper()}). "
-                f"It is now open in the **Artifact Viewer** to the right for live inspection and export."
-            )
-            sources_meta = [
-                {
-                    "episode": c.title,
-                    "guest": c.guest,
-                    "speaker": c.speaker,
-                    "timestamp": c.timestamp_str,
-                    "url": c.youtube_timed_url or c.youtube_url
-                }
-                for c in chunks
-            ]
-
-        else:
-            # Default: Grounded Q&A via Growth Assistant
-            growth_agent = GrowthAssistantAgent(llm_provider)
-            result = await growth_agent.answer(
-                question=payload.message,
-                conversation_history=history_messages,
-                top_k=5
-            )
-            assistant_content = result["answer"]
-            sources_meta = result["sources"]
-
+        agent_result = await agent_engine.run(
+            user_message=payload.message,
+            conversation_history=history_messages
+        )
     except Exception as e:
-        logger.exception("Error processing chat request: %s", e)
+        logger.exception("Agent execution failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Chat processing failed: {str(e)}"
+            detail=f"Agent execution failed: {str(e)}"
         )
 
-    # 6. Save assistant response to DB
+    # 6. Save artifact if generated by tool
+    artifact_payload = None
+    if agent_result.artifact:
+        created_artifact = await art_repo.create_artifact(
+            session_id=session.id,
+            type=agent_result.artifact["type"],
+            title=agent_result.artifact["title"],
+            content=agent_result.artifact["content"],
+            sanitized_content=agent_result.artifact.get("sanitized_content")
+        )
+        artifact_payload = ArtifactPayload(
+            id=created_artifact.id,
+            session_id=created_artifact.session_id,
+            title=created_artifact.title,
+            type=created_artifact.type,
+            content=created_artifact.content,
+            sanitized_content=created_artifact.sanitized_content
+        )
+
+    # 7. Save assistant message to DB
     saved_msg = await msg_repo.add_message(
         session_id=session.id,
         role="assistant",
-        content=assistant_content,
-        sources=sources_meta,
-        intent=detected_intent.value
+        content=agent_result.content,
+        sources=agent_result.sources,
+        intent=agent_result.intent
     )
 
     return ChatResponse(
         message_id=saved_msg.id,
         session_id=session.id,
-        content=assistant_content,
-        intent=detected_intent.value,
-        sources=sources_meta,
+        content=agent_result.content,
+        intent=agent_result.intent,
+        sources=agent_result.sources,
         artifact=artifact_payload,
         provider=llm_provider.provider_name,
-        model=llm_provider.model_name
+        model=llm_provider.model_name,
+        tool_calls=agent_result.tool_calls,
+        evidence_sufficient=agent_result.evidence_sufficient
     )

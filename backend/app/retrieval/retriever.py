@@ -94,12 +94,15 @@ class TranscriptRetriever:
         self,
         query: str,
         top_k: int = 5,
-        min_score: float = 0.25
+        min_score: float = 0.10
     ) -> List[RetrievedChunk]:
         """
         Performs semantic vector search + keyword re-ranking.
         Returns top relevant chunks with source metadata.
         """
+        if not query or not query.strip():
+            return []
+
         if self.vectors is None or len(self.chunks) == 0:
             logger.warning("Retriever called with empty index.")
             return []

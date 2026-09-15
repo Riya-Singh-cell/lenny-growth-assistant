@@ -63,3 +63,9 @@ junit/
 
 # Raw cloned transcripts cache (keep README)
 data/transcripts_cache/
+# Local virtual environment
+.venv310/
+
+# Generated raw transcript clone
+data/transcripts_raw/
+backend/data/

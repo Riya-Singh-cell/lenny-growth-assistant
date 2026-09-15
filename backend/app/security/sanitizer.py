@@ -32,19 +32,52 @@ ALLOWED_ATTRIBUTES = {
 # Allowed URL protocols
 ALLOWED_PROTOCOLS = ["http", "https", "mailto", "#"]
 
-# Allowed CSS properties
+# Allowed CSS properties: intentionally narrow to the CSS used by safe artifact cards/layouts.
+# This preserves HTML sanitization while blocking dangerous CSS features and XSS vectors.
 ALLOWED_CSS_PROPERTIES = [
-    "color", "background", "background-color", "font-family", "font-size", "font-weight",
-    "text-align", "text-decoration", "line-height", "margin", "margin-top", "margin-bottom",
-    "margin-left", "margin-right", "padding", "padding-top", "padding-bottom", "padding-left",
-    "padding-right", "border", "border-radius", "border-color", "border-width", "border-style",
-    "width", "height", "max-width", "max-height", "min-width", "min-height", "display",
-    "flex", "flex-direction", "justify-content", "align-items", "gap", "grid", "grid-template-columns",
-    "box-shadow", "overflow", "overflow-x", "overflow-y", "position", "top", "left", "right", "bottom",
-    "z-index", "opacity", "cursor", "list-style-type"
+    "color",
+    "background-color",
+    "padding",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "border-radius",
+    "border",
+    "border-color",
+    "border-width",
+    "border-style",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "text-align",
+    "line-height",
+    "margin",
+    "margin-top",
+    "margin-bottom",
+    "margin-left",
+    "margin-right",
+    "width",
+    "height",
+    "max-width",
+    "min-width",
+    "display",
+    "justify-content",
+    "align-items",
+    "gap",
+    "overflow",
+    "overflow-x",
+    "overflow-y",
+    "position",
+    "top",
+    "left",
+    "right",
+    "bottom",
+    "z-index",
+    "opacity",
 ]
 
-# Configure CSS sanitizer if available
+# Configure CSS sanitizer if available. `tinycss2` is required for Bleach CSS sanitization.
 css_sanitizer = None
 try:
     from bleach.css_sanitizer import CSSSanitizer
@@ -67,24 +100,33 @@ def sanitize_html(raw_html: str) -> str:
         return ""
 
     try:
+        import html
         # Pre-process: parse with BeautifulSoup to strip high-risk elements and handlers
         soup = BeautifulSoup(raw_html, "html.parser")
         
-        prohibited_tags = ["script", "iframe", "object", "embed", "applet", "meta", "base", "form"]
+        prohibited_tags = [
+            "script", "iframe", "object", "embed", "applet", "meta", "base", "form",
+            "animate", "set", "handler", "listener", "frame", "frameset"
+        ]
         for tag_name in prohibited_tags:
             for el in soup.find_all(tag_name):
                 el.decompose()
 
-        # Remove any on* event handler attributes
+        # Remove any on* event handler attributes and dangerous schemes across all tags
         for tag in soup.find_all(True):
             attrs = dict(tag.attrs)
-            for attr in attrs:
-                if attr.lower().startswith("on") or attr.lower().startswith("data-on"):
+            for attr, val in attrs.items():
+                attr_lower = attr.lower()
+                # 1. Any on* or data-on* attribute (onclick, onload, onerror, onmouseover, etc.)
+                if attr_lower.startswith("on") or attr_lower.startswith("data-on") or "onload" in attr_lower or "onerror" in attr_lower:
                     del tag.attrs[attr]
-                if attr.lower() in ("href", "src"):
-                    val = str(tag.attrs[attr]).strip().lower()
-                    if val.startswith("javascript:") or val.startswith("data:text/html") or val.startswith("vbscript:"):
-                        tag.attrs[attr] = "#"
+                    continue
+
+                # 2. Check attribute value for dangerous protocols (including entity-encoded)
+                val_str = str(val).strip()
+                val_decoded = html.unescape(val_str).lower().replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
+                if any(val_decoded.startswith(proto) for proto in ("javascript:", "data:text/html", "vbscript:")):
+                    del tag.attrs[attr]
 
         cleaned_intermediate = str(soup)
 
@@ -100,9 +142,14 @@ def sanitize_html(raw_html: str) -> str:
 
         cleaned_html = bleach.clean(cleaned_intermediate, **bleach_kwargs)
 
-        # Sanitize style blocks if present: defang dangerous url() and @import
+        # Sanitize style blocks: defang url(), @import, expression(), behavior:, -moz-binding
+        cleaned_html = re.sub(r'url\s*\([^)]*javascript:[^)]*\)', 'none', cleaned_html, flags=re.IGNORECASE)
+        cleaned_html = re.sub(r'url\s*\([^)]*data:[^)]*\)', 'none', cleaned_html, flags=re.IGNORECASE)
         cleaned_html = re.sub(r'url\s*\((?![\'"]?(?:https?:|data:image\/))', 'blocked-url(', cleaned_html, flags=re.IGNORECASE)
-        cleaned_html = re.sub(r'@import\b', '/* blocked @import */', cleaned_html, flags=re.IGNORECASE)
+        cleaned_html = re.sub(r'@import\b[^;]*;?', '/* blocked-import */', cleaned_html, flags=re.IGNORECASE)
+        cleaned_html = re.sub(r'expression\s*\([^;}]*', 'inherit', cleaned_html, flags=re.IGNORECASE)
+        cleaned_html = re.sub(r'behavior\s*:[^;]*;?', '', cleaned_html, flags=re.IGNORECASE)
+        cleaned_html = re.sub(r'-moz-binding\s*:[^;]*;?', '', cleaned_html, flags=re.IGNORECASE)
 
         logger.debug("Successfully sanitized HTML (original len=%d, cleaned len=%d)", len(raw_html), len(cleaned_html))
         return cleaned_html

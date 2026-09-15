@@ -45,11 +45,12 @@ async def readiness_check():
     total_chunks = retriever.total_chunks
 
     # Check DB
-    db_status = "connected"
+    from app.db.database import get_engine, is_sqlite_fallback
+    from sqlalchemy import text
+    engine = get_engine()
+    db_type = "SQLite fallback" if is_sqlite_fallback or "sqlite" in str(engine.url) else "PostgreSQL"
+    db_status = f"connected ({db_type})"
     try:
-        from app.db.database import get_engine
-        from sqlalchemy import text
-        engine = get_engine()
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception as e:

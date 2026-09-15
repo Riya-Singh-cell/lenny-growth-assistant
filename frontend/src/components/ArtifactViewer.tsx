@@ -8,18 +8,21 @@ import {
   Download,
   Eye,
   Code2,
-  ShieldCheck
+  ShieldCheck,
+  PanelRightClose
 } from 'lucide-react';
 import type { ArtifactPayload } from '../types';
 
 interface ArtifactViewerProps {
   artifact: ArtifactPayload;
   onClose: () => void;
+  onCollapse?: () => void;
 }
 
 export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
   artifact,
   onClose,
+  onCollapse,
 }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source'>('preview');
   const [copied, setCopied] = useState(false);
@@ -101,6 +104,15 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
           >
             <Download className="w-4 h-4" />
           </button>
+          {onCollapse && (
+            <button
+              onClick={onCollapse}
+              className="p-1.5 text-slate-400 hover:text-white rounded-md hover:bg-slate-800 transition-colors"
+              title="Collapse panel"
+            >
+              <PanelRightClose className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-white rounded-md hover:bg-slate-800 transition-colors ml-1"
@@ -149,11 +161,11 @@ export const ArtifactViewer: React.FC<ArtifactViewerProps> = ({
       <div className="flex-1 overflow-hidden relative bg-slate-950">
         {activeTab === 'preview' ? (
           isHtml ? (
-            /* Sandboxed isolated Iframe preventing script execution and token theft */
+            /* Opaque sandboxed isolated Iframe preventing script execution and token theft */
             <iframe
               title={artifact.title}
               srcDoc={iframeDocument}
-              sandbox="allow-same-origin"
+              sandbox=""
               className="w-full h-full border-none bg-slate-50"
             />
           ) : (

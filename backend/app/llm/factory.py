@@ -17,7 +17,12 @@ def get_llm_provider(provider_override: Optional[str] = None, model_override: Op
 
     if provider_name == "ollama":
         model = model_override or settings.OLLAMA_MODEL
-        return OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=model)
+        return OllamaProvider(
+            base_url=settings.OLLAMA_BASE_URL,
+            model=model,
+            timeout=settings.OLLAMA_TIMEOUT_SECONDS,
+            max_tokens=settings.OLLAMA_MAX_TOKENS,
+        )
 
     elif provider_name == "anthropic":
         model = model_override or settings.ANTHROPIC_MODEL
@@ -29,4 +34,9 @@ def get_llm_provider(provider_override: Optional[str] = None, model_override: Op
 
     else:
         logger.warning("Unrecognized provider '%s', defaulting to Ollama.", provider_name)
-        return OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model=settings.OLLAMA_MODEL)
+        return OllamaProvider(
+            base_url=settings.OLLAMA_BASE_URL,
+            model=settings.OLLAMA_MODEL,
+            timeout=settings.OLLAMA_TIMEOUT_SECONDS,
+            max_tokens=settings.OLLAMA_MAX_TOKENS,
+        )

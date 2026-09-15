@@ -30,21 +30,36 @@ async def lifespan(app: FastAPI):
     # 1. Initialize DB tables
     try:
         await init_db()
-        logger.info("Database schema initialized successfully.")
     except Exception as e:
         logger.warning("Database auto-init warning: %s", e)
 
     # 2. Check knowledge base vector store
     retriever = get_retriever()
-    logger.info("Current vector store chunk count: %d", retriever.total_chunks)
     if retriever.total_chunks == 0:
         logger.info("Vector store is empty on startup. Triggering initial background ingestion...")
         try:
-            # Seed with top episodes for immediate evaluator readiness
             await ingest_transcripts(limit=5)
-            logger.info("Initial knowledge base seeded with %d chunks.", retriever.total_chunks)
         except Exception as e:
             logger.warning("Initial background ingestion deferred: %s", e)
+
+    # 3. Log Startup Diagnostics Banner
+    from app.llm.factory import get_llm_provider
+    from app.db.database import get_engine, is_sqlite_fallback
+    provider = get_llm_provider()
+    provider_status = await provider.check_health()
+    engine = get_engine()
+    db_mode = "SQLite (fallback mode)" if is_sqlite_fallback or "sqlite" in str(engine.url) else "PostgreSQL (canonical)"
+
+    logger.info("=" * 65)
+    logger.info("  THE LENNY GROWTH ASSISTANT - STARTUP DIAGNOSTICS")
+    logger.info("=" * 65)
+    logger.info("  - Active LLM Provider : %s", provider.provider_name)
+    logger.info("  - Configured Model    : %s", provider.model_name)
+    logger.info("  - Provider Reachable  : %s", "YES" if provider_status.is_available else f"NO ({provider_status.error or 'unreachable'})")
+    logger.info("  - Database Backend    : %s", db_mode)
+    logger.info("  - Knowledge Base Chunks: %d indexed", retriever.total_chunks)
+    logger.info("  - RAG Refusal Guard   : threshold = %.2f", settings.RAG_CONFIDENCE_THRESHOLD)
+    logger.info("=" * 65)
 
     yield
 

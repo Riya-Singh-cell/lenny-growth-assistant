@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD)
 # The Lenny Growth Assistant
 
-**Status**: Shipped & Production-Ready  
+**Status**: Implemented; local runtime and PostgreSQL deployment remain environment-dependent verification items.  
 **Author**: Forward Deployed AI Engineer  
 **Knowledge Base**: [Lenny's Podcast Transcripts](https://github.com/ChatPRD/lennys-podcast-transcripts) (300+ Episodes)
 
@@ -45,7 +45,7 @@ Product managers and founders face an ocean of high-signal knowledge embedded in
 - Strict Grounded Growth Assistant with transparent refusal.
 - Dedicated Ship 30 for 30 Content Skill (~1,250 words).
 - Dedicated Artifact Generation Skill producing Markdown or styled HTML/CSS.
-- Sandboxed in-app Artifact Viewer (`<iframe>` with `sandbox="allow-same-origin"`).
+- Sandboxed in-app Artifact Viewer (`<iframe>` with an opaque `sandbox=""`).
 - Multi-session persistence with session isolation in PostgreSQL/SQLite.
 - Hot-swappable LLM Provider abstraction (Ollama, Anthropic Claude, OpenAI).
 - Comprehensive automated test suite (`pytest`) and diagnostics panel.
@@ -119,5 +119,5 @@ Product managers and founders face an ocean of high-signal knowledge embedded in
 1. **AC-1 (API Health)**: `GET /health` returns HTTP 200 with `status: ok`; `GET /ready` reports LLM, DB, and chunk counts.
 2. **AC-2 (Grounded Retrieval)**: Asking about Adam Fishman's onboarding advice retrieves Adam Fishman's transcript chunks with relevance score and YouTube timestamp links.
 3. **AC-3 (Ship 30 Length)**: Requesting a Ship 30 essay produces structured output between 1,000 and 1,500 words with explicit bold anchors and checklist.
-4. **AC-4 (Artifact Isolation)**: Generating an HTML artifact renders inside an `<iframe>` with `sandbox="allow-same-origin"`; embedded `<script>` tags are scrubbed.
+4. **AC-4 (Artifact Isolation)**: Generating an HTML artifact renders inside an `<iframe>` with opaque `sandbox=""`; embedded `<script>` tags are scrubbed.
 5. **AC-5 (Session Isolation)**: Messages saved in Session 1 cannot be fetched via Session 2 endpoints.

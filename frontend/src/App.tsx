@@ -18,6 +18,7 @@ export const App: React.FC = () => {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<SessionDetail | null>(null);
   const [activeArtifact, setActiveArtifact] = useState<ArtifactPayload | null>(null);
+  const [mobileTab, setMobileTab] = useState<'chat' | 'artifact'>('chat');
   const [readiness, setReadiness] = useState<ReadinessResponse | null>(null);
   const [currentProvider, setCurrentProvider] = useState<string>('ollama');
   const [currentModel, setCurrentModel] = useState<string>('llama3.2');
@@ -168,6 +169,7 @@ export const App: React.FC = () => {
       // Auto-open artifact if one was created
       if (res.artifact) {
         setActiveArtifact(res.artifact);
+        setMobileTab('artifact');
       }
 
       // Update session title in sidebar if updated
@@ -207,8 +209,42 @@ export const App: React.FC = () => {
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
       />
 
+      {/* Responsive Segmented Tab Switcher (Visible only below lg / 1024px when artifact is present) */}
+      {activeArtifact && (
+        <div className="lg:hidden flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-xs shrink-0 z-30">
+          <div className="flex items-center space-x-1 bg-slate-950 p-0.5 rounded-lg">
+            <button
+              onClick={() => setMobileTab('chat')}
+              className={`px-3 py-1 rounded-md font-medium transition-all ${
+                mobileTab === 'chat' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Chat Conversation
+            </button>
+            <button
+              onClick={() => setMobileTab('artifact')}
+              className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 ${
+                mobileTab === 'artifact' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>Artifact</span>
+              <span className="text-[10px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                {activeArtifact.type.toUpperCase()}
+              </span>
+            </button>
+          </div>
+          <button
+            onClick={() => { setActiveArtifact(null); setMobileTab('chat'); }}
+            className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-slate-800 transition-colors"
+            title="Close artifact"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
       {/* Main Split Layout: Sidebar + Chat + Artifact Viewer */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Left Sidebar */}
         <Sidebar
           sessions={sessions}
@@ -219,21 +255,32 @@ export const App: React.FC = () => {
           chunkCount={readiness?.vector_store?.total_chunks || 0}
         />
 
-        {/* Center Main Chat */}
-        <ChatArea
-          messages={activeSession?.messages || []}
-          isLoading={isLoading}
-          onSendMessage={handleSendMessage}
-          onOpenArtifact={setActiveArtifact}
-          error={error}
-        />
-
-        {/* Right Artifact Panel */}
-        {activeArtifact && (
-          <ArtifactViewer
-            artifact={activeArtifact}
-            onClose={() => setActiveArtifact(null)}
+        {/* Center Main Chat (Full width on small screens when mobileTab === 'chat'; side-by-side on desktop) */}
+        <div className={`flex-1 flex flex-col h-full overflow-hidden ${activeArtifact && mobileTab === 'artifact' ? 'hidden lg:flex' : 'flex'}`}>
+          <ChatArea
+            messages={activeSession?.messages || []}
+            isLoading={isLoading}
+            onSendMessage={handleSendMessage}
+            onOpenArtifact={(art) => {
+              setActiveArtifact(art);
+              setMobileTab('artifact');
+            }}
+            error={error}
           />
+        </div>
+
+        {/* Right Artifact Panel (Full width on small screens when mobileTab === 'artifact'; side-by-side on desktop) */}
+        {activeArtifact && (
+          <div className={`h-full ${mobileTab === 'chat' ? 'hidden lg:flex' : 'flex w-full lg:w-[560px]'} shrink-0 z-20`}>
+            <ArtifactViewer
+              artifact={activeArtifact}
+              onClose={() => {
+                setActiveArtifact(null);
+                setMobileTab('chat');
+              }}
+              onCollapse={() => setMobileTab('chat')}
+            />
+          </div>
         )}
       </div>
 
