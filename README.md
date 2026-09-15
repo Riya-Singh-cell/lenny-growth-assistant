@@ -45,6 +45,18 @@ The SAME Canonical Tools:
 Retrieval Engine (2,186 Chunks) / Ship30 Skill / Artifact Skill
 ```
 
+### Backend API Surface
+
+The FastAPI application is assembled in `backend/app/main.py` and exposes interactive API documentation at `/docs` when the backend is running.
+
+- `GET /health`: lightweight HTTP 200 application health response.
+- `GET /ready`: readiness details for the active LLM provider, database connection, and vector-store population.
+- `POST /api/chat`: accepts `{ "session_id": "...", "message": "...", "provider": "...", "model": "..." }`. Provider and model are optional overrides. The response includes the assistant content, intent, sources, provider/model, tool calls, evidence status, and an optional artifact.
+- `POST/GET/DELETE /api/sessions` and `GET /api/sessions/{session_id}`: create, list, inspect, and delete sessions with their messages and artifacts.
+- `POST /api/artifacts`: stores Markdown or HTML artifacts; HTML is sanitized before the sanitized representation is persisted. `GET /api/artifacts/{artifact_id}` and `GET /api/artifacts/session/{session_id}` retrieve artifacts.
+
+Messages and artifacts are persisted through SQLAlchemy repositories. PostgreSQL is the canonical database architecture; when PostgreSQL is unreachable, the application uses the local SQLite compatibility path and reports that mode in diagnostics/readiness.
+
 ---
 
 ## 3. Key Features
@@ -79,6 +91,25 @@ Retrieval Engine (2,186 Chunks) / Ship30 Skill / Artifact Skill
 - **Node.js**: v18 or higher (v20+ recommended).
 - **Ollama** (for local offline demo): [https://ollama.com](https://ollama.com)
 - *(Optional)* **Docker & Docker Compose** (for PostgreSQL and containerized execution).
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and adjust only the values needed for the chosen run mode. The main settings are:
+
+| Variable | Purpose | Local default / guidance |
+| :--- | :--- | :--- |
+| `LLM_PROVIDER` | Selects `ollama`, `anthropic`, or `openai`. | `ollama` |
+| `OLLAMA_BASE_URL` | Ollama server address. | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Local generation model. | `qwen2.5:0.5b` |
+| `OLLAMA_TIMEOUT_SECONDS` / `OLLAMA_MAX_TOKENS` | Local request timeout and output cap. | `180.0` / `512` |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Optional Anthropic cloud configuration. | Key omitted for local demo |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | Optional OpenAI cloud configuration. | Key omitted for local demo |
+| `DATABASE_URL` | PostgreSQL URL or explicit SQLite URL. | PostgreSQL default; SQLite fallback |
+| `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | Embedding backend and model. | `sentence_transformers` / `all-MiniLM-L6-v2` |
+| `RAG_CONFIDENCE_THRESHOLD` | Minimum score used by the programmatic grounding guard. | `0.22` |
+| `CORS_ORIGINS` | Comma-separated frontend origins. | Local Vite origins |
+
+API keys are optional for the mandatory local Ollama demo. Never commit `.env` or secret values.
 
 ---
 
@@ -132,6 +163,14 @@ npm install
 npm run dev
 ```
 Open `http://localhost:5173` in your browser.
+
+### Cloud Model Setup
+
+Cloud providers are optional alternatives to the verified local demo. Set `LLM_PROVIDER=anthropic` and provide `ANTHROPIC_API_KEY`, or set `LLM_PROVIDER=openai` and provide `OPENAI_API_KEY`; choose the corresponding model with `ANTHROPIC_MODEL` or `OPENAI_MODEL`. The application uses the cloud provider implementation and Claude Agent SDK path for Anthropic mode. A missing cloud key is reported as unavailable and generation instructs the operator to switch back to Ollama or configure the key.
+
+### Provider and Model Switching
+
+The configured provider/model is selected by the factory in `backend/app/llm/factory.py`. The `/api/chat` request can also supply optional `provider` and `model` overrides for a single request. An unrecognized provider falls back to the configured Ollama provider. The local Ollama path and cloud path expose the same canonical tools; only the execution driver changes.
 
 ---
 
@@ -209,6 +248,19 @@ Test coverage includes:
 11. Provider routing and factory fallback.
 12. Agent tool invocation.
 
+### Manual UI Test Plan
+
+With Ollama running and both services started:
+
+1. Open the frontend and confirm the startup/model status is visible.
+2. Submit a grounded growth question and confirm an answer includes transcript source cards, speaker/timestamp metadata, and a timed playback link.
+3. Submit an unsupported question and confirm the deterministic insufficient-evidence refusal appears without fabricated sources.
+4. Request a Ship 30 essay and confirm the essay intent, structured headings, checklist, and source citations.
+5. Request an HTML artifact, confirm the split-screen viewer opens, then inspect Preview and Source modes and the download/copy controls.
+6. Confirm the responsive chat/artifact tabs work below the desktop breakpoint.
+
+The automated result verified in the current local environment is **40 passed, 0 failed, 26 warnings**. The local run used the SQLite fallback because PostgreSQL was not reachable/authenticated; PostgreSQL runtime success was not claimed.
+
 ---
 
 ## 11. Security Model
@@ -226,5 +278,47 @@ Artifacts generated by LLMs are untrusted HTML/CSS. The system implements strict
 
 ---
 
-## 12. License
+## 12. Troubleshooting
+
+- **Ollama is unavailable:** run `ollama serve`, confirm `ollama list`, and check `OLLAMA_BASE_URL`. `/ready` and the startup diagnostics report the provider error.
+- **The configured Ollama model is missing:** run `ollama pull qwen2.5:0.5b` or change `OLLAMA_MODEL` to an installed model. The health check can report available models; generation errors identify the missing model.
+- **Ollama generation times out:** the request may still be loading the model or generating. Increase `OLLAMA_TIMEOUT_SECONDS` or use a smaller installed model.
+- **Cloud provider is unavailable:** confirm the matching API key is configured, or set `LLM_PROVIDER=ollama` for the local demo. No cloud key is required for local mode.
+- **Readiness is degraded:** inspect `/ready` for LLM, database, and vector-store details. An empty vector store can trigger initial ingestion on startup; otherwise run the ingestion command below.
+- **PostgreSQL is unreachable:** local startup uses SQLite compatibility mode and logs `[FALLBACK] PostgreSQL unreachable. Operating in local SQLite compatibility mode.` This is the verified local behavior; PostgreSQL remains the canonical deployment architecture.
+- **Retrieval returns no evidence:** confirm `data/vector_store/` contains the indexed metadata and vectors, then check the query against the indexed transcript topics. The programmatic guard returns a deterministic refusal for empty or below-threshold retrieval.
+- **Frontend cannot reach the backend:** start the backend on port 8000, confirm the frontend origin is included in `CORS_ORIGINS`, and inspect the browser network panel for `/api` errors.
+
+## 13. Extending the System
+
+- **LLM providers:** add or update provider implementations under `backend/app/llm/`, then register selection behavior in `backend/app/llm/factory.py`.
+- **Retrieval and ingestion:** inspect `backend/app/retrieval/chunking.py`, `embeddings.py`, `retriever.py`, and `ingestion.py`; refresh the corpus with `scripts/ingest_transcripts.py`.
+- **Agent tools and skills:** add canonical tool dispatch or schemas in `backend/app/agents/core.py`; implement focused skills under `backend/app/agents/skills/` and route intents through the existing agent flow.
+- **Artifact security:** modify the narrow allowlists and sanitization behavior in `backend/app/security/sanitizer.py`; preserve server sanitization and the client iframe sandbox together.
+- **API and frontend behavior:** update the relevant router under `backend/app/api/`, then the matching frontend service/component under `frontend/src/`; extend `backend/tests/` for changed contracts.
+
+## 14. Project Deliverables
+
+- [Product requirements](docs/PRD.md)
+- [Design specification](docs/design.md)
+- [Architecture documentation](docs/architecture.md)
+- [AI-assisted development transcripts](agent-transcripts/)
+- [Backend test suite](backend/tests/)
+- [This README](README.md)
+
+## 15. Fresh Evaluator Checklist
+
+1. Clone the repository.
+2. Create `.env` from `.env.example`.
+3. Install backend dependencies: `cd backend` then `pip install -r requirements.txt`.
+4. Start Ollama and pull the recommended model: `ollama serve`, then `ollama pull qwen2.5:0.5b`.
+5. Start the backend: `python -m uvicorn app.main:app --reload --port 8000`.
+6. Install frontend dependencies: `cd frontend` then `npm install`.
+7. Start the frontend: `npm run dev`.
+8. Open `http://localhost:5173`.
+9. Run the tests: from the repository root use `pytest backend/tests -q`, or from `backend` use `python -m pytest -q`.
+
+---
+
+## 16. License
 MIT License. Transcripts and guest insights courtesy of [Lenny's Podcast](https://www.lennyspodcast.com/).
