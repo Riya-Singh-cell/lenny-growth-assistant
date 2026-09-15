@@ -55,7 +55,7 @@ Retrieval Engine (2,186 Chunks) / Ship30 Skill / Artifact Skill
 - ✍️ **Ship 30 for 30 Essay Skill**: Dedicated multi-stage pipeline producing ~1,250-word publication-ready essays.
 - 🎨 **In-App Artifact Viewer**: Split-screen preview for interactive HTML/CSS frameworks and Markdown documents.
 - 🛡️ **Opaque HTML Security & Sandboxing**: Server-side Bleach + TinyCSS2 sanitization + client-side sandboxed `<iframe>` (`sandbox=""`), defanging `<script>`, event handlers, SVG attacks, and CSS expression vectors.
-- 🔄 **Hot-Swappable LLM Providers**: Toggle between local Ollama (`myphi3:latest`, `llama3.2`) and Cloud Claude/OpenAI on the fly.
+- 🔄 **Hot-Swappable LLM Providers**: Toggle between local Ollama (`qwen2.5:0.5b` recommended) and Cloud Claude/OpenAI on the fly.
 - 💾 **PostgreSQL First with SQLite Fallback**: Canonical database with Alembic schema migrations; automatically falls back to local SQLite with structured logging.
 - 📱 **Responsive Mobile/Tablet UX**: Collapsible artifact panel and mobile tab switcher preserving full usability on screens under 1024px.
 - 🩺 **Startup Diagnostics**: Real-time observability over model reachability, database engine, and vector index chunk counts.
@@ -68,7 +68,7 @@ Retrieval Engine (2,186 Chunks) / Ship30 Skill / Artifact Skill
 - **Backend**: Python 3.10+, FastAPI, Pydantic v2, SQLAlchemy 2.0 (Async), Alembic, Bleach, TinyCSS2, BeautifulSoup4.
 - **Database**: PostgreSQL 16 with pgvector (Docker) / SQLite with aiosqlite (local zero-config fallback).
 - **AI & RAG**: Claude Agent SDK (`claude-agent-sdk`), Ollama local provider (`qwen2.5:0.5b` recommended), SentenceTransformers / hashed embeddings, Numpy cosine similarity.
-- **Testing**: Pytest, Pytest-Asyncio, HTTPX TestClient (**38 automated tests passing**).
+- **Testing**: Pytest, Pytest-Asyncio, HTTPX TestClient (**40 automated tests passing**).
 - **Deployment**: Docker, Docker Compose, Nginx.
 
 ---
@@ -190,7 +190,7 @@ python scripts/ingest_transcripts.py --force
 
 ## 10. Automated Testing
 
-Run the comprehensive 38-test test suite:
+Run the comprehensive 40-test test suite:
 ```bash
 pytest backend/tests -v
 ```
